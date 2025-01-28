@@ -228,12 +228,21 @@ def walk_eml(
             continue
 
         payload = bytes(payload)
+        decoded_payload = "Decoding error!"  # Initialize with default value
+
         if (
             content_type == "text/plain" or content_type == "text/html"
         ) and not content_disposition:
-            decoded_payload = decode_to_str(payload, content_charset)
+            try:
+                decoded_payload = decode_to_str(payload, content_charset)
+            except Exception as e:
+                logger.error(f"{eml_path} not decoded correctly: {str(e)}")
+                continue
+
         if decoded_payload == "Decoding error!":
             logger.error(f"{eml_path} not decoded correctly.")
+            continue
+
         if content_type == "text/plain" and not content_disposition:
             plain_text_content += decoded_payload
         elif content_type == "text/html" and not content_disposition:
