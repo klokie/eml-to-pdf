@@ -76,7 +76,7 @@ def get_args() -> argparse.Namespace:
         "-v",
         "--verbose",
         action="store_true",
-        help="Show a lot of verbose debugging info. Forces " "number of procs to 1.",
+        help="Show a lot of verbose debugging info. Forces number of procs to 1.",
     )
     args = parser.parse_args()
     return args
@@ -118,7 +118,7 @@ class Header:
             self.to_addr = header_to_html(msg.get("to", "No recipient"))
             self.subject = header_to_html(msg.get("subject", "No subject"))
         except UnicodeError as e:
-            logger.error(f"Failed to decode header field for {eml_path}: " f"{str(e)}")
+            logger.error(f"Failed to decode header field for {eml_path}: {str(e)}")
 
         msg_date = msg.get("date", "")
         self.date = (
@@ -411,8 +411,21 @@ def process_eml(
     """Main worker function to generate a pdf from an eml."""
     logging.info(f"Processing {eml_path}")
     # Open and parse the .eml file
-    with open(eml_path, "r") as f:
-        msg = email.message_from_file(f)
+    # Try different encodings to handle various EML file encodings
+    encodings_to_try = ["utf-8", "latin-1", "cp1252", "iso-8859-1"]
+    msg = None
+
+    for encoding in encodings_to_try:
+        try:
+            with open(eml_path, "r", encoding=encoding) as f:
+                msg = email.message_from_file(f)
+            break
+        except UnicodeDecodeError:
+            continue
+
+    if msg is None:
+        logger.error(f"Could not decode {eml_path} with any of the attempted encodings")
+        return
 
     email_header = Header(msg, eml_path)
     html_content, attachments = walk_eml(msg, eml_path)
@@ -444,7 +457,7 @@ def process_eml(
         )
     else:
         logger.warning(
-            "No plain text or HTML content found " f"in {eml_path}. Skipping..."
+            f"No plain text or HTML content found in {eml_path}. Skipping..."
         )
 
 
