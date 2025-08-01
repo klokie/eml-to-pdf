@@ -3,32 +3,37 @@ requires = ["setuptools", "setuptools_scm[toml]"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "eml-to-pdf"
+name = "eml2pdf"
 description = "Convert .eml (email) files to PDF using Python."
-keywords = ["eml", "pdf", "html", "mime", "multipart"]
-license = { text = "MIT License" }
-urls = { repository = "https://github.com/klokie/eml-to-pdf" }
+readme = 'README.md'
+keywords = ["eml", "pdf", "pdf-converter", "weasyprint", "html", "mime", "multipart"]
 authors = [
+    {name = "Pieter Lenaerts", email = "pieter.lenaerts@outlook.be"},
     {name = "Daniel Grossfeld", email = "github@klokie.com"},
-    {name = "Pieter Lenaerts", email = "pieter.aj.lenaerts@gmail.com"}
 ]
 requires-python = ">= 3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
 dependencies = [
-    "weasyprint~=63.0",
+    "weasyprint~=64.0",
     "markdown~=3.7",
     "hurry.filesize~=0.9",
-    "beautifulsoup4~=4.12"
+    "beautifulsoup4~=4.13"
 ]
-dynamic = ["version", "readme"]
+dynamic = ["version"]
 
-[tool.setuptools.dynamic]
-readme = {file = ["README.md"]}
+[project.urls]
+Homepage = "https://github.com/plenaerts/eml2pdf"
+Repository = "https://github.com/plenaerts/eml2pdf"
+Issues = "https://github.com/plenaerts/eml2pdf/issues"
 
 [project.scripts]
-eml_to_pdf = "eml_to_pdf.eml_to_pdf:main"
+eml2pdf = "eml2pdf.eml2pdf:main"
 
 [tool.setuptools]
-packages = ["eml_to_pdf"]
+packages = ["eml2pdf"]
 include-package-data = false
 
 [tool.setuptools_scm]

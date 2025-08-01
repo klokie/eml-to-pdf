@@ -29,8 +29,10 @@ logger = logging.getLogger(__name__)
 def get_cpu_count():
     """Get the number of available CPU cores."""
     try:
+        # This is only available on some Unix platforms (mainly Linux)
         return len(os.sched_getaffinity(0))
-    except AttributeError:
+    except (AttributeError, NotImplementedError):
+        # Fall back to os.cpu_count() on other platforms like macOS
         return os.cpu_count() or 1
 
 
