@@ -12,7 +12,7 @@ import fnmatch
 import os
 from io import BufferedWriter
 import logging
-from multiprocessing import Pool, Process, Queue
+from multiprocessing import Process, Queue
 import hashlib
 from dataclasses import dataclass
 
@@ -172,12 +172,12 @@ def embed_imgs(html_content: str, attachments: dict) -> str:
     """Return html with embedded images from attachments."""
     # Limit to prevent weasyprint crashes with oversized embedded images
     MAX_EMBEDDED_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
-    
+
     if html_content:
         for cid, attachment in attachments.items():
             content_type = attachment["content_type"]
             content_bytes = attachment["content"]
-            
+
             # Skip embedding if image is too large
             if len(content_bytes) > MAX_EMBEDDED_IMAGE_SIZE:
                 logger.warning(
@@ -187,7 +187,7 @@ def embed_imgs(html_content: str, attachments: dict) -> str:
                 # Remove the cid reference to prevent broken image links
                 html_content = html_content.replace(f'src="cid:{cid}"', 'src=""')
                 continue
-            
+
             content = base64.b64encode(content_bytes).decode("utf-8")
             data_uri = f"data:{content_type};base64,{content}"
 
@@ -355,7 +355,7 @@ def generate_pdf(
 ):
     """Convert HTML to PDF."""
     logger.debug(f"Starting PDF generation for {infile}")
-    
+
     # Warn about very large HTML (might cause issues)
     html_size_mb = len(html_content) / (1024 * 1024)
     if html_size_mb > 10:
@@ -363,19 +363,19 @@ def generate_pdf(
             f"Large HTML content detected for {infile}: {html_size_mb:.2f} MB. "
             "This may cause performance issues or crashes."
         )
-    
+
     try:
         if debug_html:
             html_file_pre = outfile_path.parent / Path(outfile_path.name + ".pre-sanitize.html")
             logger.debug(f"Writing pre-sanitized HTML to {html_file_pre}")
             with open(html_file_pre, "w") as of:
                 of.write(html_content)
-        
+
         if not unsafe:
             logger.info(f"Sanitizing HTML for {infile.name}")
             html_content = security.sanitize_html(html_content)
             logger.info(f"Sanitization complete for {infile.name}")
-        
+
         if debug_html:
             html_file = outfile_path.parent / Path(outfile_path.name + ".html")
             logger.debug(f"Writing sanitized HTML to {html_file}")
@@ -383,13 +383,13 @@ def generate_pdf(
                 of.write(html_content)
 
         logger.info(f"Creating HTML object for {infile.name} (size: {html_size_mb:.2f} MB)")
-        
+
         # Write to temp file first - more stable than rendering from string
         import tempfile
         with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as tmp:
             tmp_path = tmp.name
             tmp.write(html_content)
-        
+
         try:
             html = HTML(filename=tmp_path)
             logger.info(f"HTML object created from temp file for {infile.name}")
@@ -542,7 +542,7 @@ def process_single_file_isolated(ep: Path, output_dir: Path, page: str, debug_ht
 def main():
     # Set up argument parser
     args = get_args()
-    
+
     if args.unsafe:
         logger.warning(
             "WARNING! Not trying to "
@@ -564,24 +564,24 @@ def main():
     eml_file_paths = get_filepaths(args.input_dir)
     num_files = len(eml_file_paths)
     logger.info(f"Found {num_files} EML files to process")
-    
+
     success_count = 0
     crashed_count = 0
     failure_count = 0
-    
-    logger.info(f"Processing files sequentially with crash protection")
-    
+
+    logger.info("Processing files sequentially with crash protection")
+
     for i, ep in enumerate(eml_file_paths, 1):
         logger.info(f"[{i}/{num_files}] Processing {ep.name}")
-        
+
         # Create a queue for result communication
         result_queue = Queue()
-        
+
         # Process in separate process to isolate crashes
         p = Process(target=process_single_file_isolated, args=(ep, Path(args.output_dir), args.page, args.debug_html, args.unsafe, result_queue))
         p.start()
         p.join(timeout=60)  # 60 second timeout per file
-        
+
         if p.is_alive():
             # Process is hanging, terminate it
             logger.error(f"✗ Timeout processing {ep.name} - terminating")
@@ -605,7 +605,7 @@ def main():
             # Crashed (segfault or other error)
             logger.error(f"✗ Process crashed (exit code {p.exitcode}) processing {ep.name} - skipping")
             crashed_count += 1
-    
+
     print(f"\n✓ Processing complete: {success_count} succeeded, {crashed_count} crashed, {failure_count} failed out of {num_files} total.")
 
 
