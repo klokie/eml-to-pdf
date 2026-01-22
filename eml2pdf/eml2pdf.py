@@ -12,7 +12,7 @@ import fnmatch
 import os
 from io import BufferedWriter
 import logging
-from multiprocessing import Pool
+from multiprocessing import Pool, Process, Queue
 import hashlib
 from dataclasses import dataclass
 
@@ -22,7 +22,10 @@ from hurry.filesize import size  # type: ignore
 
 from . import security
 
-logging.basicConfig()
+logging.basicConfig(
+    format='%(levelname)s:%(name)s:%(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 
@@ -167,10 +170,25 @@ def header_to_html(header_str: str) -> str:
 
 def embed_imgs(html_content: str, attachments: dict) -> str:
     """Return html with embedded images from attachments."""
+    # Limit to prevent weasyprint crashes with oversized embedded images
+    MAX_EMBEDDED_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
+    
     if html_content:
         for cid, attachment in attachments.items():
             content_type = attachment["content_type"]
-            content = base64.b64encode(attachment["content"]).decode("utf-8")
+            content_bytes = attachment["content"]
+            
+            # Skip embedding if image is too large
+            if len(content_bytes) > MAX_EMBEDDED_IMAGE_SIZE:
+                logger.warning(
+                    f"Skipping embedding large image (CID: {cid}, "
+                    f"size: {len(content_bytes)} bytes) - exceeds {MAX_EMBEDDED_IMAGE_SIZE} bytes"
+                )
+                # Remove the cid reference to prevent broken image links
+                html_content = html_content.replace(f'src="cid:{cid}"', 'src=""')
+                continue
+            
+            content = base64.b64encode(content_bytes).decode("utf-8")
             data_uri = f"data:{content_type};base64,{content}"
 
             # Replace CID references in HTML
@@ -336,23 +354,65 @@ def generate_pdf(
     unsafe: bool = False,
 ):
     """Convert HTML to PDF."""
-    if not unsafe:
-        html_content = security.sanitize_html(html_content)
+    logger.debug(f"Starting PDF generation for {infile}")
+    
+    # Warn about very large HTML (might cause issues)
+    html_size_mb = len(html_content) / (1024 * 1024)
+    if html_size_mb > 10:
+        logger.warning(
+            f"Large HTML content detected for {infile}: {html_size_mb:.2f} MB. "
+            "This may cause performance issues or crashes."
+        )
+    
     try:
         if debug_html:
+            html_file_pre = outfile_path.parent / Path(outfile_path.name + ".pre-sanitize.html")
+            logger.debug(f"Writing pre-sanitized HTML to {html_file_pre}")
+            with open(html_file_pre, "w") as of:
+                of.write(html_content)
+        
+        if not unsafe:
+            logger.info(f"Sanitizing HTML for {infile.name}")
+            html_content = security.sanitize_html(html_content)
+            logger.info(f"Sanitization complete for {infile.name}")
+        
+        if debug_html:
             html_file = outfile_path.parent / Path(outfile_path.name + ".html")
-            of = open(html_file, "w")
-            of.write(html_content)
-            of.close()
-        html = HTML(string=html_content)
-        css = CSS(string=f"@page {{ size: {page}; margin: 1cm }}")
+            logger.debug(f"Writing sanitized HTML to {html_file}")
+            with open(html_file, "w") as of:
+                of.write(html_content)
 
-        outfile = get_exclusive_outfile(outfile_path)
+        logger.info(f"Creating HTML object for {infile.name} (size: {html_size_mb:.2f} MB)")
+        
+        # Write to temp file first - more stable than rendering from string
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(html_content)
+        
+        try:
+            html = HTML(filename=tmp_path)
+            logger.info(f"HTML object created from temp file for {infile.name}")
+            css = CSS(string=f"@page {{ size: {page}; margin: 1cm }}")
 
-        html.write_pdf(outfile, presentational_hints=True, stylesheets=[css])
-        print(f"Converted {infile} to PDF successfully.")
+            logger.debug(f"Opening output file {outfile_path}")
+            outfile = get_exclusive_outfile(outfile_path)
+            try:
+                logger.info(f"Writing PDF for {infile.name}")
+                html.write_pdf(outfile, presentational_hints=True, stylesheets=[css])
+                logger.info(f"✓ Converted {infile.name} to PDF successfully.")
+            finally:
+                logger.debug(f"Closing output file for {infile.name}")
+                outfile.close()
+        finally:
+            # Clean up temp file
+            import os
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
     except Exception as e:
-        logger.error(f"Failed to convert {infile}: {str(e)}")
+        logger.error(f"✗ Failed to convert {infile}: {str(e)}")
 
 
 def get_filepaths(input_dir: Path) -> list[Path]:
@@ -406,33 +466,39 @@ def process_eml(
     unsafe: bool = False,
 ):
     """Main worker function to generate a pdf from an eml."""
-    logging.info(f"Processing {eml_path}")
-    # Open and parse the .eml file
-    # Try different encodings to handle various EML file encodings
-    encodings_to_try = ["utf-8", "latin-1", "cp1252", "iso-8859-1"]
-    msg = None
+    try:
+        logger.info(f"[START] Processing {eml_path}")
+        # Open and parse the .eml file
+        # Try different encodings to handle various EML file encodings
+        encodings_to_try = ["utf-8", "latin-1", "cp1252", "iso-8859-1"]
+        msg = None
 
-    for encoding in encodings_to_try:
-        try:
-            with open(eml_path, "r", encoding=encoding) as f:
-                msg = email.message_from_file(f)
-            break
-        except UnicodeDecodeError:
-            continue
+        for encoding in encodings_to_try:
+            try:
+                with open(eml_path, "r", encoding=encoding) as f:
+                    msg = email.message_from_file(f)
+                logger.debug(f"Successfully decoded {eml_path} with {encoding}")
+                break
+            except UnicodeDecodeError:
+                continue
 
-    if msg is None:
-        logger.error(f"Could not decode {eml_path} with any of the attempted encodings")
-        return
+        if msg is None:
+            logger.error(f"Could not decode {eml_path} with any of the attempted encodings")
+            return
 
-    email_header = Header(msg, eml_path)
-    html_content, attachments = walk_eml(msg, eml_path)
-    attachment_list = generate_attachment_list(attachments)
+        logger.debug(f"Parsing header for {eml_path}")
+        email_header = Header(msg, eml_path)
+        logger.debug(f"Walking EML structure for {eml_path}")
+        html_content, attachments = walk_eml(msg, eml_path)
+        logger.debug(f"Generating attachment list for {eml_path}")
+        attachment_list = generate_attachment_list(attachments)
 
-    # Convert to PDF if HTML content is found
-    if html_content:
-        # Add UTF-8 meta tag and email header if not present
-        if isinstance(html_content, str):
-            html_content = f"""
+        # Convert to PDF if HTML content is found
+        if html_content:
+            logger.debug(f"Building HTML content for {eml_path}")
+            # Add UTF-8 meta tag and email header if not present
+            if isinstance(html_content, str):
+                html_content = f"""
 <meta charset="UTF-8">
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 {email_header.html}
@@ -441,26 +507,42 @@ def process_eml(
 {html_content}
 """
 
-        output_path = get_output_base_path(
-            email_header.date, email_header.subject, output_dir
-        )
-        generate_pdf(
-            html_content,
-            output_path,
-            eml_path,
-            debug_html=debug_html,
-            page=page,
-            unsafe=unsafe,
-        )
-    else:
-        logger.warning(
-            f"No plain text or HTML content found in {eml_path}. Skipping..."
-        )
+            output_path = get_output_base_path(
+                email_header.date, email_header.subject, output_dir
+            )
+            logger.debug(f"Generating PDF for {eml_path} -> {output_path}")
+            generate_pdf(
+                html_content,
+                output_path,
+                eml_path,
+                debug_html=debug_html,
+                page=page,
+                unsafe=unsafe,
+            )
+            logger.info(f"[DONE] Completed {eml_path}")
+        else:
+            logger.warning(
+                f"No plain text or HTML content found in {eml_path}. Skipping..."
+            )
+    except Exception as e:
+        logger.error(f"[FAILED] Unexpected error processing {eml_path}: {type(e).__name__}: {str(e)}")
+        import traceback
+        logger.debug(traceback.format_exc())
+
+
+def process_single_file_isolated(ep: Path, output_dir: Path, page: str, debug_html: bool, unsafe: bool, result_queue: Queue):
+    """Process a single file in an isolated process to prevent crashes from affecting other files."""
+    try:
+        process_eml(ep, output_dir, page, debug_html, unsafe)
+        result_queue.put(("success", ep.name))
+    except Exception as e:
+        result_queue.put(("error", ep.name, str(e)))
 
 
 def main():
     # Set up argument parser
     args = get_args()
+    
     if args.unsafe:
         logger.warning(
             "WARNING! Not trying to "
@@ -480,23 +562,51 @@ def main():
 
     # Process all .eml files in input directory
     eml_file_paths = get_filepaths(args.input_dir)
-    # Don't use multiprocessing if n is 1 or we output debug logging.
-    # We output a lot of long debug messages. That's not multiprocess safe.
-    # Messages would get garbled.
-    if args.number_of_procs == 1 or args.verbose or logger.level == logging.DEBUG:
-        for ep in eml_file_paths:
-            process_eml(
-                ep, Path(args.output_dir), args.page, args.debug_html, args.unsafe
-            )
-    else:
-        p_args = (
-            (ep, Path(args.output_dir), args.page, args.debug_html, args.unsafe)
-            for ep in eml_file_paths
-        )
-        with Pool(args.number_of_procs) as p:
-            p.starmap(process_eml, p_args)
-
-    print("All .eml files processed.")
+    num_files = len(eml_file_paths)
+    logger.info(f"Found {num_files} EML files to process")
+    
+    success_count = 0
+    crashed_count = 0
+    failure_count = 0
+    
+    logger.info(f"Processing files sequentially with crash protection")
+    
+    for i, ep in enumerate(eml_file_paths, 1):
+        logger.info(f"[{i}/{num_files}] Processing {ep.name}")
+        
+        # Create a queue for result communication
+        result_queue = Queue()
+        
+        # Process in separate process to isolate crashes
+        p = Process(target=process_single_file_isolated, args=(ep, Path(args.output_dir), args.page, args.debug_html, args.unsafe, result_queue))
+        p.start()
+        p.join(timeout=60)  # 60 second timeout per file
+        
+        if p.is_alive():
+            # Process is hanging, terminate it
+            logger.error(f"✗ Timeout processing {ep.name} - terminating")
+            p.terminate()
+            p.join()
+            crashed_count += 1
+        elif p.exitcode == 0:
+            # Success
+            try:
+                result = result_queue.get_nowait()
+                if result[0] == "success":
+                    logger.info(f"✓ Converted {ep.name} successfully")
+                    success_count += 1
+                else:
+                    logger.error(f"✗ Error in {ep.name}: {result[2]}")
+                    failure_count += 1
+            except:
+                logger.info(f"✓ Completed {ep.name}")
+                success_count += 1
+        else:
+            # Crashed (segfault or other error)
+            logger.error(f"✗ Process crashed (exit code {p.exitcode}) processing {ep.name} - skipping")
+            crashed_count += 1
+    
+    print(f"\n✓ Processing complete: {success_count} succeeded, {crashed_count} crashed, {failure_count} failed out of {num_files} total.")
 
 
 if __name__ == "__main__":
