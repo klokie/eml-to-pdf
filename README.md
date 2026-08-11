@@ -10,20 +10,19 @@ and [wkhtmltopdf](https://github.com/wkhtmltopdf/wkhtmltopdf) are
 [deprecated libraries](
 https://github.com/JazzCore/python-pdfkit?tab=readme-ov-file#deprecation-warning)
 
-Should run on Linux distributions with Pango and Python and macOS. The Pango
-dependency is a challenge on Windows at the moment.
-
-This software is in beta state. There are some unit tests, I use it in my own
-workflow, but we need some actual users/downloads, basics for translations and
-Debian packaging files to proceed to a 1.0 release.
+eml2pdf should run on Linux distributions with Pango and Python and macOS. The
+Pango dependency is a challenge on Windows at the moment.
 
 ## Features
 
-- Converts email body plain from HTML or plain text message body.
+- Converts email body from HTML or plain text message body.
 - Tries to filter potential **security or privacy** issues.
 - Preserves formatting, character encodings, embedded images.
-- Generates a header section with email metadata From, To, Subject, Date and, if
-  any, a list of attachments with size and md5sum.
+- Generates a header section with email metadata From, To, Subject, Date.
+- Generates a list of attachments with size and md5sum. (Attachments are not
+  embedded in the PDF.)
+- Works from command line via the eml2pdf script, but can work on files or
+  bytestreams through the API.
 
 ## Dependencies
 
@@ -47,19 +46,44 @@ case you can install eml2pdf from PyPi using pip:
 pip install eml2pdf
 ```
 
-If weasyprint can't find Pango, best is to [install weasyprint using your
-system's package manager](
-https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation).
+If weasyprint can't find Pango you can consult [weasyprints install help](
+https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation)
+to install weasyprint using your system's package manager.
 
 Users of Arch linux or derived distro's like Manjora can use AUR package
 [eml2pdf](https://aur.archlinux.org/packages/eml2pdf).
 
-Check [INSTALL.md](INSTALL.md) for more detailed installation instructions if
-you need more help.
+Check [INSTALL.md on
+Github](https://github.com/plenaerts/eml2pdf/blob/main/INSTALL.md) or
+{ref}`install` for more detailed installation instructions if you need more
+help.
 
-## Usage
+## Command line usage
 
-eml2pdf will convert all .eml files in an input directory and
+eml2pdf has two modes of operation controlled via subcommands `convert_dir` and
+`convert_file`. Both modes share options to control page size, perform HTML
+sanitization, produce HTML debug output, be more quiet or verbose. Refer to
+usage help per subcommand below.
+
+```text
+usage: eml2pdf [-h] {convert_dir,convert_file} ...
+
+Convert EML files to PDF
+
+options:
+  -h, --help            show this help message and exit
+
+supported subcommands::
+  {convert_dir,convert_file}
+                        Use {subcommand} --help for options.
+    convert_dir         Convert all EML files in an input dir to PDF files in
+                        an output dir.
+    convert_file        Convert a single EML file to a single PDF
+```
+
+### convert_dir
+
+`convert_dir` will convert all .eml files in an input directory and
 save converted PDF files in a specified output directory.
 
 The output filenames are formatted as:
@@ -73,39 +97,80 @@ The output filenames are formatted as:
 For example, `some_file.eml` with subject "My Email" sent on March 15, 2024
 will become `2024-03-15_My_Email.pdf`.
 
-```text
-usage: eml2pdf [-h] [-d] [-n number] [-p size] [-v] input_dir output_dir
+`convert_dir` has `-n`/`--number-of-procs`, as a specific option to set the
+number of parallel processes. eml2pdf guesses its default value from the
+apparent number of CPU's available to the eml2pdf process. If verbose output is
+requested then -n is set to 1 or the debugging output from different
+subprocesses gets mixed.
 
-Convert EML files to PDF
+```text
+$ eml2pdf convert_dir -h
+usage: eml2pdf convert_dir [-h] [-p size] [--unsafe] [-d] [-v] [-q]
+                           [-n number] input_dir output_dir
 
 positional arguments:
   input_dir             Directory containing EML files
   output_dir            Directory for PDF output
 
 options:
-  -h, --help            Show this help message and exit.
-  -d, --debug_html      Write intermediate html file next to pdf's.
-  -n number, --number-of-procs number
-                        Number of parallel processes. Defaults to the number
-                        of available logical CPU's to eml2pdf.
-  -p size, --page size  a3 a4 a5 b4 b5 letter legal or ledger with or without
-                        'landscape', for example: 'a4 landscape' or 'a3'
-                        including quotes. Defaults to 'a4', implying portrait.
+  -h, --help            show this help message and exit
+  -p, --page size       One of a3, a4, a5, b4, b5, letter, legal, or ledger,
+                        with or without "landscape", for example:
+                        "a4 landscape" or a3. Surround with quotes if there is
+                        a space in the argument value. Defaults to "a4",
+                        implying portrait.
   --unsafe              Don't sanitize HTML from potentially unsafe elements
                         such as remote images, scripts, etc. This may expose
                         sensitive user information.
-  -v, --verbose         Show a lot of verbose debugging info. Forces number
-                        of procs to 1.
+  -d, --debug_html      Write intermediate html file next to PDF's
+  -v, --verbose         Show a lot of verbose debugging info. Forces number of
+                        procs to 1.
+  -q, --quiet           Show only errors.
+  -n, --number-of-procs number
+                        Number of parallel processes. Defaults to the number of
+                        available logical CPU's to eml_to_pdf.
 ```
 
-Example below renders all .eml files in `./emails` to a4 landscape oriented pdf's
-in `./pdf`:
+Example below renders all .eml files in `./emails` to a4 landscape oriented
+pdf's in `./pdf`:
 
 ```bash
-eml2pdf -p 'a4 landscape' ./emails ./pdfs
+eml2pdf -p "a4 landscape" ./emails ./pdfs
 ```
 
-### Debug HTML
+### convert_file
+
+convert_file works per file, taking the input filename of the EML to convert
+to PDF and output filename to convert to.
+
+```text
+$ eml2pdf convert_file -h
+usage: eml2pdf convert_file [-h] [-p size] [--unsafe] [-d] [-v] [-q]
+                            input_file output_file
+
+positional arguments:
+  input_file        Input EML file to convert
+  output_file       Output PDF file to convert to
+
+options:
+  -h, --help        show this help message and exit
+  -p, --page size   One of a3, a4, a5, b4, b5, letter, legal, or ledger, with
+                    or without "landscape", for example: "a4 landscape" or a3.
+                    Surround with quotes if there is a space in the argument
+                    value. Defaults to "a4", implying portrait.
+  --unsafe          Don't sanitize HTML from potentially unsafe elements such
+                    as remote images, scripts, etc. This may expose sensitive
+                    user information.
+  -d, --debug_html  Write intermediate html file next to PDF's
+  -v, --verbose     Show a lot of verbose debugging info. Forces number of
+                    procs to 1.
+  -q, --quiet       Show only errors.
+
+```
+
+### Shared options between convert_dir and convert_file
+
+#### Debug HTML
 
 eml2pdf will first parse email header info such as date, subject, etc. Next
 the mail body will be parsed. If there is an HTML body, eml2pdf will clean
@@ -114,20 +179,20 @@ a summary table.
 
 In a next step this HTML is rendered by weasyprint to a PDF.
 
-The '--debug_html' flag will save this intermediate HTML. You can use this to
+The `--debug_html` flag will save this intermediate HTML. You can use this to
 check if there is an email parsing issue in eml2pdf or a PDF conversion issue
 in weasyprint.
 
-### Page size
+#### Page size
 
 Not all emails are properly formatted. Part of your mail might not be visible
 in the pdf in case an email doesn't limit width of some elements such as
 images, tables or others. You can play with page sizes and orientations to try
 and accomodate wide emails.
 
-### Security
+#### Security
 
-#### HTML Sanitization
+##### HTML Sanitization
 
 Emails can contain HTML which can contain stuff you don't expect or want.
 
@@ -144,20 +209,37 @@ remote stylesheets, etc.
 We try to cleanup. We can't give you a 100% guarantee. If you're very worried,
 please cleanup your mails yourself.
 
-You can use the --unsafe flag if you don't want eml2pdf to try and
+You can use the `--unsafe` flag if you don't want eml2pdf to try and
 sanitize your mails. Check your mails' content before you use this flag!
 
-#### MD5 sums of attachments
+##### MD5 sums of attachments
 
 eml2pdf lists attachments with their md5sums. You can use these md5sums for
 your convenience. They give a very strong indication that files are not
 altered. **They will not be usable as proof in courts of law.**
 They are not intended to be.
 
+## API usage
+
+The API is documented in the code and html docs are available by building the
+docs. (See below for development info.)
+
+Simple API example:
+
+```python
+>>> from eml2pdf import process_eml_bytes
+>>> with open('tests/test_data/plain_lorem_ipsum.eml', 'rb') as infile:
+...     with open('/tmp/out.pdf', 'wb') as outfile:
+...         outfile.write(process_eml_bytes(infile.read()))
+...         
+8960
+```
+
 ## Reporting issues
 
 We've tested eml2pdf with a couple of cases with embedded images, tables,
-unicode or specific encodings. Refer to [tests](tree/main/tests) for example
+unicode or specific encodings. Refer to
+[tests](https://github.com/plenaerts/eml2pdf/tree/main/tests) for example
 emails.
 
 Please open an issue ticket if you have a mail where conversion results are
@@ -166,14 +248,28 @@ expect. Attach verbose eml2pdf output of only this eml file and attach
 the eml file itself. We're not promising a solution, but we can
 have a look.
 
-**Please cleanup any attachments you add. Remove things you don't want to share with
-the world.**
+**Please cleanup any attachments you add. Remove things you don't want to
+share with the world.**
 
 ## Credits
 
 eml2pdf was originally forked from [klokie/eml-to-pdf](
 https://github.com/klokie/eml-to-pdf) by [Daniel Grossfeld](
 https://github.com/klokie/).
+
+### Contributors
+
+- Inline non-image attachments - [omusale](https://github.com/omusale)
+- convert_file mode and 8bit CTE with UTF-8 encoding -
+  [bastidest](https://github.com/bastidest).
+- Fix bug - Header class not renamed correctly
+  [benhxy](https://github.com/benhxy)
+- Support in-memory EML to PDF conversion -
+  [Levi Lesches](https://github.com/Levi-Lesches)
+
+If you want to work on eml2pdf, read [DEVELOPMENT.md on
+GitHub](https://github.com/plenaerts/eml2pdf/blob/main/DEVELOPMENT.md) or
+{ref}`development`. PR's welcome ;-).
 
 ## License
 
