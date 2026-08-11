@@ -11,13 +11,14 @@ authors = [
     {name = "Pieter Lenaerts", email = "pieter.lenaerts@outlook.be"},
     {name = "Daniel Grossfeld", email = "github@klokie.com"},
 ]
+
 requires-python = ">= 3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "weasyprint~=64.0",
+    "weasyprint>=64.0",
     "markdown~=3.7",
     "hurry.filesize~=0.9",
     "beautifulsoup4~=4.13"
@@ -32,8 +33,202 @@ Issues = "https://github.com/plenaerts/eml2pdf/issues"
 [project.scripts]
 eml2pdf = "eml2pdf.eml2pdf:main"
 
+[project.optional-dependencies]
+# Install with: pip install -e ".[dev]"
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=2.0.0",
+    "myst-parser>=2.0.0",  # For Markdown support in Sphinx
+    "poethepoet>=0.24.0",  # Task runner
+    "build>=1.0.0",  # For building distributions
+    "twine>=4.0.0",  # For uploading to PyPI
+    "ruff",
+    "pymarkdownlnt",
+    "mypy",
+]
+# Install with: pip install -e ".[docs]"
+docs = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=2.0.0",
+    "myst-parser>=2.0.0",
+]
+# Install with: pip install -e ".[test]"
+test = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+]
+
 [tool.setuptools]
 packages = ["eml2pdf"]
 include-package-data = false
 
 [tool.setuptools_scm]
+
+[tool.pytest.ini_options]
+# Pytest configuration
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+mypy_path = "stubs"
+
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # mccabe
+    "C90",
+]
+
+# Poe the Poet task configuration
+# Run 'poe' to see all available tasks
+[tool.poe.tasks]
+
+# Testing tasks
+[tool.poe.tasks.test]
+help = "Run tests with pytest"
+cmd = "pytest"
+
+[tool.poe.tasks.test-verbose]
+help = "Run tests with verbose output"
+cmd = "pytest -vv"
+
+[tool.poe.tasks.coverage]
+help = "Run tests with coverage report (HTML in htmlcov/)"
+cmd = "pytest --cov=eml2pdf --cov-report=html --cov-report=term"
+
+# Documentation tasks
+[tool.poe.tasks.docs]
+help = "Build HTML documentation with Sphinx"
+shell = "cd docs && sphinx-build -b html . _build/html && echo '\nDocs built in docs/_build/html/index.html'"
+
+[tool.poe.tasks.docs-serve]
+help = "Build and serve docs at http://localhost:8000"
+sequence = [
+    { cmd = "poe docs" },
+    { shell = "echo '\nServing at http://localhost:8000 - Press Ctrl+C to stop' && cd docs/_build/html && python -m http.server 8000" }
+]
+
+[tool.poe.tasks.docs-clean]
+help = "Clean documentation build files"
+shell = "rm -rf docs/_build"
+
+# Build and distribution tasks
+[tool.poe.tasks.build]
+help = "Build source and wheel distributions"
+sequence = [
+    { cmd = "poe clean" },
+    { cmd = "python -m build" },
+    { shell = "echo '\nBuild complete. Distributions in dist/'" }
+]
+
+[tool.poe.tasks.upload-test]
+help = "Upload to TestPyPI (requires credentials)"
+sequence = [
+    { cmd = "poe build" },
+    { cmd = "python -m twine upload --repository testpypi dist/*" }
+]
+
+[tool.poe.tasks.upload]
+help = "Upload to PyPI (requires credentials)"
+sequence = [
+    { cmd = "poe build" },
+    { cmd = "python -m twine upload dist/*" }
+]
+
+# Cleaning tasks
+[tool.poe.tasks.clean]
+help = "Remove build artifacts and cache files"
+shell = """
+rm -rf build/ dist/ *.egg-info .pytest_cache .mypy_cache htmlcov/ .coverage
+find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+find . -type f -name "*.pyc" -delete
+"""
+
+[tool.poe.tasks.clean-all]
+help = "Remove all build, cache, and documentation files"
+sequence = [
+    { cmd = "poe clean" },
+    { cmd = "poe docs-clean" },
+    { shell = "echo 'Cleaned all build artifacts'" }
+]
+
+# Development workflow tasks
+[tool.poe.tasks.lint-fix]
+help = "Auto-fix all lint issues (Python and Markdown)"
+sequence = [
+    { cmd = "ruff check --fix ." },
+    { cmd = "ruff format ." },
+    { cmd = "pymarkdownlnt fix CHANGELOG.md DEVELOPMENT.md INSTALL.md README.md SECURITY.md docs/*.md" },
+]
+
+[tool.poe.tasks.check]
+help = "Run all checks: lint, format, mypy, and tests"
+sequence = [
+    { cmd = "ruff check ." },
+    { cmd = "ruff format --check ." },
+    { cmd = "pymarkdownlnt scan CHANGELOG.md DEVELOPMENT.md INSTALL.md README.md SECURITY.md docs/*.md" },
+    { cmd = "mypy ." },
+    { cmd = "poe test" }
+]
+
+[tool.poe.tasks.check-deps]
+help = "Show available newer versions for main dependencies"
+sequence = [
+    { cmd = "pip index versions weasyprint" },
+    { cmd = "pip index versions markdown" },
+    { cmd = "pip index versions hurry.filesize" },
+    { cmd = "pip index versions beautifulsoup4" },
+]
+
+[tool.poe.tasks.check-dev-deps]
+help = "Show available newer versions for dev dependencies"
+sequence = [
+    { cmd = "pip index versions pytest" },
+    { cmd = "pip index versions pytest-cov" },
+    { cmd = "pip index versions sphinx" },
+    { cmd = "pip index versions sphinx-rtd-theme" },
+    { cmd = "pip index versions myst-parser" },
+    { cmd = "pip index versions ruff" },
+    { cmd = "pip index versions pymarkdownlnt" },
+]
+
+[tool.poe.tasks.check-debian-deps]
+help = "Check if dependencies match Debian stable versions"
+cmd = "python scripts/check_debian_deps.py"
+
+[tool.poe.tasks.generate-test-emls]
+help = "Generate test EML files"
+cmd = "python scripts/generate_test_emls.py"
+
+[tool.poe.tasks.dev-setup]
+help = "Complete development environment setup"
+shell = """
+pip install -e ".[dev]" && echo '\nDevelopment environment ready!' && echo 'Try: poe test, poe docs, poe build'
+"""
