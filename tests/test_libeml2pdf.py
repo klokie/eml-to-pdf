@@ -33,6 +33,19 @@ class TestProcessEml(unittest.TestCase):
         self.assertTrue(self.output_pdf.exists())
         self.assertGreater(self.output_pdf.stat().st_size, 0)
 
+    def test_process_eml_inline_html_body_not_dropped(self):
+        """Regression test for github.com/klokie/eml-to-pdf issue #5.
+
+        A body part marked Content-Disposition: inline must still be
+        converted, not silently skipped.
+        """
+        converted = libeml2pdf.process_eml(
+            test_eml_path / 'plain_and_html_inline.eml', self.output_pdf
+        )
+        self.assertTrue(converted)
+        self.assertTrue(self.output_pdf.exists())
+        self.assertGreater(self.output_pdf.stat().st_size, 0)
+
 
 class TestProcessEmlBytes(unittest.TestCase):
     """Test the process_eml_bytes function."""
@@ -88,6 +101,54 @@ class TestProcessAllEmlsInDir(unittest.TestCase):
         # Check that all PDFs have content
         for pdf_file in pdf_files:
             self.assertGreater(pdf_file.stat().st_size, 0)
+
+    def test_process_all_emls_in_dir_reports_skips_and_exits_nonzero(self):
+        """Skipped files are summarized and cause a non-zero exit.
+
+        Regression test for github.com/klokie/eml-to-pdf issue #5: a batch
+        run with any skipped file must not silently report success.
+        """
+        eml_files = [
+            self.test_dir / 'a.eml',
+            self.test_dir / 'b.eml',
+        ]
+        for f in eml_files:
+            f.touch()
+
+        with (
+            patch.object(
+                libeml2pdf, '_get_filepaths', return_value=eml_files
+            ),
+            patch.object(
+                libeml2pdf, 'process_eml', side_effect=[True, False]
+            ) as mock_process_eml,
+            patch.object(libeml2pdf.sys, 'exit') as mock_exit,
+        ):
+            libeml2pdf.process_all_emls_in_dir(
+                self.input_dir, self.output_dir
+            )
+
+        self.assertEqual(mock_process_eml.call_count, 2)
+        mock_exit.assert_called_once_with(1)
+
+    def test_process_all_emls_in_dir_no_skips_no_exit(self):
+        """No skipped files means no non-zero exit call."""
+        eml_files = [self.test_dir / 'a.eml', self.test_dir / 'b.eml']
+        for f in eml_files:
+            f.touch()
+
+        with (
+            patch.object(
+                libeml2pdf, '_get_filepaths', return_value=eml_files
+            ),
+            patch.object(libeml2pdf, 'process_eml', return_value=True),
+            patch.object(libeml2pdf.sys, 'exit') as mock_exit,
+        ):
+            libeml2pdf.process_all_emls_in_dir(
+                self.input_dir, self.output_dir
+            )
+
+        mock_exit.assert_not_called()
 
 
 class TestSetLogLevels(unittest.TestCase):

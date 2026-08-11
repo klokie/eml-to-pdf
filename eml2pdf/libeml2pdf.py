@@ -679,7 +679,7 @@ def process_eml(
     debug_html: bool = False,
     unsafe: bool = False,
     logging_id: str | None = None,
-):
+) -> bool:
     """Process a single EML file and generate a PDF.
 
     1. Parse EML file with email.message_from_binary_file() (fallback to
@@ -711,9 +711,14 @@ def process_eml(
         logging_id (str | None, optional): Identifier for logging context.
           Defaults to the eml_path name.
 
+    Returns:
+        bool: True if a PDF was generated, False if the file was skipped
+          because no plain text or HTML content was found.
+
     Note:
-        If no text content is found, the file is skipped and a warning is
-        logged.
+        A PDF is generated from the header/attachment list alone even when
+        no plain text or HTML body is found. The file is only skipped (with
+        a warning) if _generate_html() returns no content at all.
         Output filename format: {date}-{subject}.pdf
     """
     # Use filename as default logging_id if not provided
@@ -749,11 +754,13 @@ def process_eml(
             unsafe=unsafe,
             logging_id=effective_logging_id,
         )
+        return True
     else:
         logger.warning(
             f'{prefix}No plain text or HTML content found '
             f'in {eml_path}. Skipping...'
         )
+        return False
 
 
 def process_eml_bytes(
@@ -824,6 +831,8 @@ def process_all_emls_in_dir(
     Note:
         Creates output_dir with parents if it doesn't exist.
         Exits with code 1 if output directory cannot be created.
+        Exits with code 1 if any EML file was skipped (no text/html content
+        found), after printing a summary listing the skipped files.
         Uses Python's multiprocessing.Pool for parallel processing.
     """
 
@@ -840,17 +849,33 @@ def process_all_emls_in_dir(
     # We output a lot of long debug messages. That's not multiprocess safe.
     # Messages would get garbled.
     if number_of_procs == 1 or logger.level == logging.DEBUG:
-        for ep in eml_file_paths:
+        results = [
             process_eml(ep, Path(output_dir), page, debug_html, unsafe)
+            for ep in eml_file_paths
+        ]
     else:
         p_args = (
             (ep, Path(output_dir), page, debug_html, unsafe)
             for ep in eml_file_paths
         )
         with Pool(number_of_procs) as p:
-            p.starmap(process_eml, p_args)
+            results = p.starmap(process_eml, p_args)
 
-    print('All .eml files processed.')
+    skipped = [
+        ep
+        for ep, converted in zip(eml_file_paths, results, strict=True)
+        if not converted
+    ]
+
+    print(
+        f'All .eml files processed. '
+        f'Converted {len(results) - len(skipped)}, skipped {len(skipped)}.'
+    )
+    if skipped:
+        print('Skipped (no plain text or HTML content found):')
+        for ep in skipped:
+            print(f'  {ep}')
+        sys.exit(1)
 
 
 def _set_log_levels():
